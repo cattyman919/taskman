@@ -2,20 +2,63 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"io"
+	// "log"
 	"os"
+	"strings"
 
+	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/shirou/gopsutil/v4/process"
 	"golang.org/x/sys/windows"
 )
 
-const PROCESS_LIMIT int = 10
+const PROCESS_LIMIT int = 20
+
+const listHeight = 14
+
+var (
+	titleStyle        = lipgloss.NewStyle().MarginLeft(2)
+	itemStyle         = lipgloss.NewStyle().PaddingLeft(4)
+	selectedItemStyle = lipgloss.NewStyle().PaddingLeft(2).Foreground(lipgloss.Color("170"))
+	paginationStyle   = list.DefaultStyles().PaginationStyle.PaddingLeft(4)
+	helpStyle         = list.DefaultStyles().HelpStyle.PaddingLeft(4).PaddingBottom(1)
+	quitTextStyle     = lipgloss.NewStyle().Margin(1, 0, 2, 4)
+)
+
+type item string
+
+func (i item) FilterValue() string { return "" }
+
+type itemDelegate struct{}
+
+func (d itemDelegate) Height() int                             { return 1 }
+func (d itemDelegate) Spacing() int                            { return 0 }
+func (d itemDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
+func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
+	i, ok := listItem.(item)
+	if !ok {
+		return
+	}
+
+	str := fmt.Sprintf("%d. %s", index+1, i)
+
+	fn := itemStyle.Render
+	if index == m.Index() {
+		fn = func(s ...string) string {
+			return selectedItemStyle.Render("> " + strings.Join(s, " "))
+		}
+	}
+
+	fmt.Fprint(w, fn(str))
+}
 
 type model struct {
-	processes []string
-	cursor    int
+	processes list.Model
+	choice    string
 	selected  map[int]struct{}
+	quitting  bool
 }
 
 func (m model) Init() tea.Cmd {
@@ -24,87 +67,66 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.processes.SetWidth(msg.Width)
+		return m, nil
 
 	case tea.KeyMsg:
-
-		switch msg.String() {
-
-		case "ctrl+c", "q":
+		switch keypress := msg.String(); keypress {
+		case "q", "ctrl+c":
+			m.quitting = true
 			return m, tea.Quit
 
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-
-		case "down", "j":
-			if m.cursor < PROCESS_LIMIT-1 {
-				m.cursor++
-			}
-
-		case "enter", " ":
-			_, ok := m.selected[m.cursor]
+		case "enter":
+			i, ok := m.processes.SelectedItem().(item)
 			if ok {
-				delete(m.selected, m.cursor)
-			} else {
-				m.selected[m.cursor] = struct{}{}
+				m.choice = string(i)
 			}
+			return m, tea.Quit
 		}
 	}
 
-	return m, nil
+	var cmd tea.Cmd
+	m.processes, cmd = m.processes.Update(msg)
+	return m, cmd
 }
 
 func (m model) View() string {
-
-	s := "Processes: \n\n"
-	shown, i := 0, 0
-
-	for shown < PROCESS_LIMIT {
-		name := m.processes[i]
-		if name == "" {
-      i++
-			continue
-		}
-
-		cursor := " " // no cursor
-		if m.cursor == shown {
-			cursor = ">" // cursor!
-		}
-
-		checked := " " // not selected
-		if _, ok := m.selected[shown]; ok {
-			checked = "x" // selected!
-		}
-
-		s += fmt.Sprintf("%s [%s] %s\n", cursor, checked, name)
-
-    i++
-		shown++
+	if m.choice != "" {
+		return quitTextStyle.Render(fmt.Sprintf("%s? Sounds good to me.", m.choice))
 	}
+	if m.quitting {
+		return quitTextStyle.Render("Not hungry? That’s cool.")
+	}
+	return "\n" + m.processes.View()
 
-	s += "\nPress q to quit.\n"
-
-	return s
 }
 
 func main() {
-	process, _ := process.Processes()
+	process_list, _ := process.Processes()
+  
+	name_process := make([]list.Item, len(process_list))
 
-	name_process := make([]string, len(process))
-
-	for i, p := range process {
+	for i, p := range process_list {
 		if name, err := p.Name(); err == nil {
-			name_process[i] = name
+			name_process[i] = item(name)
 		} else {
-			log.Print(err)
+			// log.Print(err)
 		}
 	}
 
-	process = nil
+	const defaultWidth = 20
+
+	l := list.New(name_process, itemDelegate{}, defaultWidth, listHeight)
+	l.Title = "What do you want for dinner?"
+	l.SetShowStatusBar(false)
+	l.SetFilteringEnabled(false)
+	l.Styles.Title = titleStyle
+	l.Styles.PaginationStyle = paginationStyle
+	l.Styles.HelpStyle = helpStyle
 
 	p := tea.NewProgram(model{
-		processes: name_process,
+		processes: l,
 		selected:  make(map[int]struct{}),
 	})
 
