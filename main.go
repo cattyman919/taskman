@@ -4,64 +4,24 @@ import (
 	"fmt"
 	"io"
 	"log"
-
 	"os"
-	"strings"
+	"strconv"
 
-	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/shirou/gopsutil/v4/process"
 	"golang.org/x/sys/windows"
 )
 
-const listHeight = 14
-
 var (
-	titleStyle        = lipgloss.NewStyle().MarginLeft(2)
-	itemStyle         = lipgloss.NewStyle().PaddingLeft(4)
-	selectedItemStyle = lipgloss.NewStyle().PaddingLeft(2).Foreground(lipgloss.Color("170"))
-	paginationStyle   = list.DefaultStyles().PaginationStyle.PaddingLeft(4)
-	helpStyle         = list.DefaultStyles().HelpStyle.PaddingLeft(4).PaddingBottom(1)
-	quitTextStyle     = lipgloss.NewStyle().Margin(1, 0, 2, 4)
+	baseStyle = lipgloss.NewStyle().
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("240"))
 )
 
-type item struct {
-  pid int32
-  name string
-}
-
-func (i item) FilterValue() string { return "" }
-
-type itemDelegate struct{}
-
-func (d itemDelegate) Height() int                             { return 1 }
-func (d itemDelegate) Spacing() int                            { return 0 }
-func (d itemDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
-func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
-	i, ok := listItem.(item)
-
-	if !ok {
-		return
-	}
-
-	str := fmt.Sprintf("%d | %s",i.pid, i.name)
-
-	fn := itemStyle.Render
-	if index == m.Index() {
-		fn = func(s ...string) string {
-			return selectedItemStyle.Render("> " + strings.Join(s, " "))
-		}
-	}
-
-	fmt.Fprint(w, fn(str))
-}
-
 type model struct {
-	processes list.Model
-	choice    string
-	selected  map[int]struct{}
-	quitting  bool
+	processes table.Model
 }
 
 func (m model) Init() tea.Cmd {
@@ -69,40 +29,30 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.processes.SetWidth(msg.Width)
-		return m, nil
-
 	case tea.KeyMsg:
-		switch keypress := msg.String(); keypress {
-		case "q", "ctrl+c":
-			m.quitting = true
-			return m, tea.Quit
-
-		case "enter":
-			i, ok := m.processes.SelectedItem().(item)
-			if ok {
-				m.choice = string(i.name)
+		switch msg.String() {
+		case "esc":
+			if m.processes.Focused() {
+				m.processes.Blur()
+			} else {
+				m.processes.Focus()
 			}
+		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "enter":
+			return m, tea.Batch(
+				tea.Printf("Let's go to %s!", m.processes.SelectedRow()[1]),
+			)
 		}
 	}
-
-	var cmd tea.Cmd
 	m.processes, cmd = m.processes.Update(msg)
 	return m, cmd
 }
 
 func (m model) View() string {
-	if m.choice != "" {
-		return quitTextStyle.Render(fmt.Sprintf("%s? Sounds good to me.", m.choice))
-	}
-	if m.quitting {
-		return quitTextStyle.Render("Jarvis, clip that!")
-	}
-	return m.processes.View()
-
+	return baseStyle.Render(m.processes.View()) + "\n"
 }
 
 func init() {
@@ -110,36 +60,53 @@ func init() {
 }
 
 func main() {
+	columns := []table.Column{
+		{Title: "PID", Width: 10},
+		{Title: "Name", Width: 20},
+	}
+
 	process_list, _ := process.Processes()
 
-	name_process := []list.Item{}
+	name_process := []table.Row{}
 
 	for _, p := range process_list {
 		if name, err := p.Name(); err == nil {
-      pid, _ := p.Ppid()
+			pid, _ := p.Ppid()
 
-			if p.Pid == 0 {
-        continue
+			if p.Pid == 0 || name == "System" {
+				continue
 			}
-      name_process = append(name_process, item{pid: pid, name:name})
+
+			name_process = append(name_process, table.Row{strconv.Itoa(int(pid)), name})
+
 		} else {
 			log.Print(err)
 		}
 	}
 
-	const defaultWidth = 20
+	t := table.New(
+		table.WithColumns(columns),
+		table.WithRows(name_process),
+		table.WithFocused(true),
+		table.WithHeight(20),
+	)
 
-	l := list.New(name_process, itemDelegate{}, defaultWidth, listHeight)
-	l.Title = "Processes :\nPID | Name \n"
-	l.SetShowStatusBar(false)
-	l.SetFilteringEnabled(false)
-	l.Styles.Title = titleStyle
-	l.Styles.PaginationStyle = paginationStyle
-	l.Styles.HelpStyle = helpStyle
+	s := table.DefaultStyles()
+
+	s.Header = s.Header.
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		BorderBottom(true).
+		Bold(false)
+
+	s.Selected = s.Selected.
+		Foreground(lipgloss.Color("229")).
+		Background(lipgloss.Color("57")).
+		Bold(false)
+	t.SetStyles(s)
 
 	p := tea.NewProgram(model{
-		processes: l,
-		selected:  make(map[int]struct{}),
+		processes: t,
 	})
 
 	if _, err := p.Run(); err != nil {
