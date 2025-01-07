@@ -15,8 +15,6 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-const PROCESS_LIMIT int = 20
-
 const listHeight = 14
 
 var (
@@ -28,7 +26,10 @@ var (
 	quitTextStyle     = lipgloss.NewStyle().Margin(1, 0, 2, 4)
 )
 
-type item string
+type item struct {
+  pid int32
+  name string
+}
 
 func (i item) FilterValue() string { return "" }
 
@@ -39,11 +40,12 @@ func (d itemDelegate) Spacing() int                            { return 0 }
 func (d itemDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
 func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
 	i, ok := listItem.(item)
+
 	if !ok {
 		return
 	}
 
-	str := fmt.Sprintf("%d. %s", index+1, i)
+	str := fmt.Sprintf("%d | %s",i.pid, i.name)
 
 	fn := itemStyle.Render
 	if index == m.Index() {
@@ -81,7 +83,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			i, ok := m.processes.SelectedItem().(item)
 			if ok {
-				m.choice = string(i)
+				m.choice = string(i.name)
 			}
 			return m, tea.Quit
 		}
@@ -99,22 +101,27 @@ func (m model) View() string {
 	if m.quitting {
 		return quitTextStyle.Render("Jarvis, clip that!")
 	}
-	return "\n" + m.processes.View()
+	return m.processes.View()
 
 }
 
-func init(){
-  log.SetOutput(io.Discard)
+func init() {
+	log.SetOutput(io.Discard)
 }
 
 func main() {
 	process_list, _ := process.Processes()
-  
+
 	name_process := []list.Item{}
 
 	for _, p := range process_list {
 		if name, err := p.Name(); err == nil {
-			name_process = append(name_process, item(name))
+      pid, _ := p.Ppid()
+
+			if p.Pid == 0 {
+        continue
+			}
+      name_process = append(name_process, item{pid: pid, name:name})
 		} else {
 			log.Print(err)
 		}
@@ -123,7 +130,7 @@ func main() {
 	const defaultWidth = 20
 
 	l := list.New(name_process, itemDelegate{}, defaultWidth, listHeight)
-	l.Title = "What do you want for dinner?"
+	l.Title = "Processes :\nPID | Name \n"
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(false)
 	l.Styles.Title = titleStyle
