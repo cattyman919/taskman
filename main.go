@@ -96,7 +96,7 @@ func (m model) View() string {
 		return quitTextStyle.Render(fmt.Sprintf("%s? Sounds good to me.", m.choice))
 	}
 	if m.quitting {
-		return quitTextStyle.Render("Not hungry? That’s cool.")
+		return quitTextStyle.Render("Jarvis, clip that!")
 	}
 	return "\n" + m.processes.View()
 
@@ -105,11 +105,11 @@ func (m model) View() string {
 func main() {
 	process_list, _ := process.Processes()
   
-	name_process := make([]list.Item, len(process_list))
+	name_process := []list.Item{}
 
-	for i, p := range process_list {
+	for _, p := range process_list {
 		if name, err := p.Name(); err == nil {
-			name_process[i] = item(name)
+			name_process = append(name_process, item(name))
 		} else {
 			// log.Print(err)
 		}
