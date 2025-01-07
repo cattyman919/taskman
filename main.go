@@ -3,7 +3,8 @@ package main
 import (
 	"fmt"
 	"io"
-	// "log"
+	"log"
+
 	"os"
 	"strings"
 
@@ -102,6 +103,10 @@ func (m model) View() string {
 
 }
 
+func init(){
+  log.SetOutput(io.Discard)
+}
+
 func main() {
 	process_list, _ := process.Processes()
   
@@ -111,7 +116,7 @@ func main() {
 		if name, err := p.Name(); err == nil {
 			name_process = append(name_process, item(name))
 		} else {
-			// log.Print(err)
+			log.Print(err)
 		}
 	}
 
